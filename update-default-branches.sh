@@ -29,6 +29,24 @@ DRY_RUN=0
 PRUNE=1
 SUMMARIZE=0
 
+# Batch mode: never prompt for credentials/passphrases -- a repo whose remote
+# needs interactive auth fails fast (FAIL + continue) instead of hanging the
+# whole sweep waiting on stdin. Override from your environment if needed.
+export GIT_TERMINAL_PROMPT="${GIT_TERMINAL_PROMPT:-0}"
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}"
+# Hard cap per fetch (seconds, 0 disables): slow/dead remotes and proxies can
+# stall long past the SSH timeout above. A timeout counts as FAIL + continue.
+FETCH_TIMEOUT="${FETCH_TIMEOUT:-120}"
+
+# git fetch bounded by FETCH_TIMEOUT. Returns 124 on timeout.
+git_fetch() {
+  if [[ "$FETCH_TIMEOUT" != "0" ]] && command -v timeout >/dev/null 2>&1; then
+    timeout "$FETCH_TIMEOUT" git fetch "$@"
+  else
+    git fetch "$@"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [options]
@@ -185,14 +203,22 @@ for dir in "$CODE_DIR"/*/; do
     fi
 
     # Always fetch first so dirty repos still get fresh refs.
-    fetch_args=(fetch)
+    fetch_args=()
     [[ "$PRUNE" == 1 ]] && fetch_args+=(--prune)
     fetch_args+=(origin)
     if [[ "$DRY_RUN" == 1 ]]; then
-      info "$name: [dry-run] would run: git ${fetch_args[*]}"
-    elif ! git "${fetch_args[@]}" >/dev/null 2>&1; then
-      fail "$name: git fetch failed"
-      exit 1
+      info "$name: [dry-run] would run: git fetch ${fetch_args[*]}"
+    else
+      git_fetch "${fetch_args[@]}" >/dev/null 2>&1
+      fetch_rc=$?
+      if [[ "$fetch_rc" -ne 0 ]]; then
+        if [[ "$fetch_rc" -eq 124 ]]; then
+          fail "$name: git fetch timed out after ${FETCH_TIMEOUT}s"
+        else
+          fail "$name: git fetch failed"
+        fi
+        exit 1
+      fi
     fi
 
     # Remote default branch must exist after fetching.
@@ -237,7 +263,12 @@ for dir in "$CODE_DIR"/*/; do
       # only succeeds on a fast-forward, so it never force-clobbers work.
       if [[ -z "$current" ]]; then where="detached HEAD"; else where="on '$current'"; fi
       before=$(git rev-parse "$branch")
-      if git fetch origin "$branch:$branch" >/dev/null 2>&1; then
+      git_fetch origin "$branch:$branch" >/dev/null 2>&1
+      fetch_rc=$?
+      if [[ "$fetch_rc" -eq 124 ]]; then
+        fail "$name: git fetch timed out after ${FETCH_TIMEOUT}s, left untouched ($where)"
+        exit 1
+      elif [[ "$fetch_rc" -eq 0 ]]; then
         after=$(git rev-parse "$branch")
         if [[ "$before" == "$after" ]]; then
           info "$name: already up to date ($branch, $where)"
