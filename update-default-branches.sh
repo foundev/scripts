@@ -34,6 +34,10 @@ SUMMARIZE=0
 # whole sweep waiting on stdin. Override from your environment if needed.
 export GIT_TERMINAL_PROMPT="${GIT_TERMINAL_PROMPT:-0}"
 export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}"
+# Last-resort prompt program: if no credential helper can supply creds (e.g. a
+# private repo with an expired token), fail fast instead of popping up a GUI
+# askpass dialog that looks like a hang. Override to allow prompting.
+export GIT_ASKPASS="${GIT_ASKPASS:-true}"
 # Hard cap per fetch (seconds, 0 disables): slow/dead remotes and proxies can
 # stall long past the SSH timeout above. A timeout counts as FAIL + continue.
 FETCH_TIMEOUT="${FETCH_TIMEOUT:-120}"
@@ -201,6 +205,9 @@ for dir in "$CODE_DIR"/*/; do
       warn "$name: could not determine default branch, skipping"
       exit 10
     fi
+
+    # Progress marker: if the sweep ever stalls, the last line names the repo.
+    info "→ $name ($branch): fetching origin..."
 
     # Always fetch first so dirty repos still get fresh refs.
     fetch_args=()
