@@ -131,16 +131,15 @@ def main():
             # Enter the Rust workspace so rustup selects the release's pinned toolchain.
             workspace = source / "codex-rs"
             run(["rustup", "show", "active-toolchain"], cwd=workspace)
-            cargo_wrapper = source / "cargo-locked"
-            cargo_wrapper.write_text('#!/bin/sh\nexec cargo "$@" --locked\n')
-            cargo_wrapper.chmod(0o755)
             env = dict(os.environ, CODEX_REPO_ROOT=str(source),
                        CARGO_TARGET_DIR=str(cache_dir / "target"))
             # Stage on the installation filesystem; activate only after validation.
             with tempfile.TemporaryDirectory(prefix=".staging-", dir=install_dir) as staging:
                 package = Path(staging) / "package"
+                # Use the builder's default Cargo invocation: release tags can
+                # need lockfile reconciliation in this disposable checkout.
                 run([sys.executable, builder, "--cargo-profile", "release",
-                     "--cargo", cargo_wrapper, "--package-version", tag.removeprefix("rust-v"),
+                     "--package-version", tag.removeprefix("rust-v"),
                      "--package-dir", package], cwd=workspace, env=env)
                 run([package / "bin/codex", "--version"])
                 if not installed_is_current(package / "bin/codex", tag.removeprefix("rust-v")):
